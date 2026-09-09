@@ -1,17 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Caverns Mobile Controller",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Adds a touch keyboard and virtual mouse to Caverns of the Mad Mage on itch.io.",
   "permissions": ["storage"],
   "host_permissions": [
-    "https://bluesquirrel.itch.io/*",
     "https://html-classic.itch.zone/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "https://bluesquirrel.itch.io/caverns-of-the-mad-mage*",
         "https://html-classic.itch.zone/html/17576366/*"
       ],
       "js": ["content.js"],
