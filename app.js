@@ -1,295 +1,104 @@
-const gameFrame = document.getElementById("gameFrame");
-const gameUrl = document.getElementById("gameUrl");
-const loadGame = document.getElementById("loadGame");
-const welcome = document.getElementById("welcome");
-const controller = document.getElementById("controller");
-const settingsButton = document.getElementById("settingsButton");
-const settingsPanel = document.getElementById("settingsPanel");
-const closeSettings = document.getElementById("closeSettings");
-const saveSettings = document.getElementById("saveSettings");
-const opacitySlider = document.getElementById("opacitySlider");
-const controllerScale = document.getElementById("controllerScale");
-const joystickMode = document.getElementById("joystickMode");
-const mouseSensitivity = document.getElementById("mouseSensitivity");
-const toast = document.getElementById("toast");
-const gameStatus = document.getElementById("gameStatus");
+const frame = document.getElementById('gameFrame');
+const welcome = document.getElementById('welcome');
+const controller = document.getElementById('controller');
+const status = document.getElementById('connectionStatus');
+const toast = document.getElementById('toast');
+const settings = document.getElementById('settingsPanel');
+const proxyInput = document.getElementById('proxyUrl');
+const sensitivity = document.getElementById('mouseSensitivity');
+const opacity = document.getElementById('opacitySlider');
+const MAD_MAGE_RUNTIME = 'https://html-classic.itch.zone/html/17576366/index.html';
 
-const MAD_MAGE_URL = "https://bluesquirrel.itch.io/caverns-of-the-mad-mage";
-const MAD_MAGE_RUNTIME = "https://html-classic.itch.zone/html/17576366/index.html";
-const MAD_MAGE_KEYS = { up: "w", down: "s", left: "a", right: "d" };
+let proxy = localStorage.getItem('cavernsProxy') || '';
+let mouseSensitivity = Number(localStorage.getItem('cavernsSensitivity') || 10);
+proxyInput.value = proxy;
+sensitivity.value = mouseSensitivity;
 
-let currentConfig = {
-    joystickMode: "wasd",
-    mouseSensitivity: 8,
-    opacity: 0.78,
-    scale: 1
-};
-
-function showToast(message) {
-    toast.textContent = message;
-    toast.classList.add("show");
-    clearTimeout(showToast.timer);
-    showToast.timer = setTimeout(() => toast.classList.remove("show"), 2200);
+function toastMessage(text) {
+  toast.textContent = text; toast.classList.add('show');
+  clearTimeout(toastMessage.timer); toastMessage.timer = setTimeout(() => toast.classList.remove('show'), 2400);
 }
 
-function normalizeUrl(value) {
-    let url = value.trim();
-    if (!url) return null;
-    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-    try { return new URL(url).href; } catch { return null; }
+function keyCode(key) {
+  if (/^[a-z]$/i.test(key)) return 'Key' + key.toUpperCase();
+  return {Enter:'Enter',Escape:'Escape', ' ':'Space'}[key] || key;
 }
 
-function isMadMage(url) {
-    try {
-        const parsed = new URL(url);
-        return parsed.hostname === "bluesquirrel.itch.io" && parsed.pathname.includes("caverns-of-the-mad-mage");
-    } catch {
-        return false;
-    }
-}
-
-function resolveGameRuntime(url) {
-    // The itch.io page is a wrapper around the actual HTML5 runtime.
-    // For this game we know the embedded runtime URL and load it directly.
-    if (isMadMage(url)) return MAD_MAGE_RUNTIME;
-    return url;
-}
-
-function updateStatus(text, state = "") {
-    if (!gameStatus) return;
-    gameStatus.textContent = text;
-    gameStatus.dataset.state = state;
-}
-
-function loadGamePage() {
-    const url = normalizeUrl(gameUrl.value);
-    if (!url) {
-        showToast("Please enter a valid URL.");
-        return;
-    }
-
-    const runtimeUrl = resolveGameRuntime(url);
-    welcome.style.display = "none";
-    gameFrame.style.display = "block";
-    updateStatus(isMadMage(url) ? "Loading game runtime…" : "Loading game…", "loading");
-    gameFrame.src = runtimeUrl;
-
-    if (isMadMage(url)) {
-        currentConfig.joystickMode = "wasd";
-        joystickMode.value = "wasd";
-        updateStatus("Caverns • loading runtime", "preset");
-        showToast("Loading Caverns of the Mad Mage…");
-    } else {
-        showToast("Loading game…");
-    }
-}
-
-loadGame.addEventListener("click", loadGamePage);
-gameUrl.addEventListener("keydown", event => {
-    if (event.key === "Enter") loadGamePage();
-});
-
-function dispatchIntoSameOriginFrame(message) {
-    try {
-        const doc = gameFrame.contentDocument;
-        if (!doc) return false;
-        const target = doc.activeElement || doc.body || doc.documentElement;
-        if (!target) return false;
-
-        if (message.type === "keyboard") {
-            const init = {
-                key: message.key,
-                code: keyToCode(message.key),
-                bubbles: true,
-                cancelable: true,
-                composed: true
-            };
-            target.dispatchEvent(new KeyboardEvent(message.action === "keydown" ? "keydown" : "keyup", init));
-            return true;
-        }
-
-        if (message.type === "mouse" && message.action === "move") {
-            target.dispatchEvent(new MouseEvent("mousemove", {
-                bubbles: true,
-                cancelable: true,
-                clientX: window.innerWidth / 2 + message.dx,
-                clientY: window.innerHeight / 2 + message.dy,
-                movementX: message.dx,
-                movementY: message.dy
-            }));
-            return true;
-        }
-    } catch (_) {
-        return false;
-    }
+function sendKeyboard(type, key) {
+  try {
+    const doc = frame.contentDocument;
+    if (!doc) throw new Error('cross-origin');
+    const target = doc.activeElement || doc.body || doc.documentElement;
+    target.dispatchEvent(new KeyboardEvent(type, {key, code:keyCode(key), bubbles:true, cancelable:true, composed:true}));
+    return true;
+  } catch (_) {
+    toastMessage('Controller needs same-origin game mode');
     return false;
+  }
 }
 
-function keyToCode(key) {
-    if (key.length === 1 && /[a-z]/i.test(key)) return `Key${key.toUpperCase()}`;
-    if (key.length === 1 && /[0-9]/.test(key)) return `Digit${key}`;
-    return {
-        ArrowUp: "ArrowUp", ArrowDown: "ArrowDown", ArrowLeft: "ArrowLeft", ArrowRight: "ArrowRight",
-        Enter: "Enter", Escape: "Escape", " ": "Space",
-        Shift: "ShiftLeft", Control: "ControlLeft"
-    }[key] || key;
+function mouseEvent(type, x, y, button = 0) {
+  try {
+    const doc = frame.contentDocument;
+    if (!doc) throw new Error('cross-origin');
+    const target = doc.activeElement || doc.body || doc.documentElement;
+    target.dispatchEvent(new MouseEvent(type, {bubbles:true,cancelable:true,clientX:x,clientY:y,button,buttons:type==='mouseup'?0:1}));
+  } catch (_) { toastMessage('Controller needs same-origin game mode'); }
 }
 
-function sendToGame(message) {
-    if (dispatchIntoSameOriginFrame(message)) return true;
-    if (!gameFrame.contentWindow) return false;
-    // This only works if the embedded game explicitly listens for postMessage.
-    gameFrame.contentWindow.postMessage(message, "*");
-    return false;
+let virtualX = 400, virtualY = 300;
+function moveMouse(dx, dy) {
+  virtualX += dx * mouseSensitivity; virtualY += dy * mouseSensitivity;
+  virtualX = Math.max(0, virtualX); virtualY = Math.max(0, virtualY);
+  mouseEvent('mousemove', virtualX, virtualY, 0);
 }
 
-function sendKeyDown(key) { sendToGame({ type: "keyboard", action: "keydown", key }); }
-function sendKeyUp(key) { sendToGame({ type: "keyboard", action: "keyup", key }); }
-
-const buttons = document.querySelectorAll(".game-button, .shoulder, .utility");
-buttons.forEach(button => {
-    const key = button.dataset.key;
-    button.addEventListener("pointerdown", event => {
-        event.preventDefault();
-        button.setPointerCapture?.(event.pointerId);
-        sendKeyDown(key);
-    });
-    button.addEventListener("pointerup", event => {
-        event.preventDefault();
-        sendKeyUp(key);
-    });
-    button.addEventListener("pointercancel", () => sendKeyUp(key));
-    button.addEventListener("lostpointercapture", () => sendKeyUp(key));
-});
-
-class Joystick {
-    constructor(element, mode) {
-        this.element = element;
-        this.mode = mode;
-        this.base = element.querySelector(".joystick-base");
-        this.stick = element.querySelector(".joystick-stick");
-        this.active = false;
-        this.pointerId = null;
-        this.center = { x: 0, y: 0 };
-        this.maxDistance = 42;
-        element.addEventListener("pointerdown", e => this.start(e));
-        element.addEventListener("pointermove", e => this.move(e));
-        element.addEventListener("pointerup", e => this.end(e));
-        element.addEventListener("pointercancel", e => this.end(e));
-        element.addEventListener("lostpointercapture", e => this.end(e));
-    }
-    start(e) {
-        e.preventDefault();
-        this.active = true;
-        this.pointerId = e.pointerId;
-        this.element.setPointerCapture?.(e.pointerId);
-        const rect = this.base.getBoundingClientRect();
-        this.center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-        this.move(e);
-    }
-    move(e) {
-        if (!this.active || e.pointerId !== this.pointerId) return;
-        const dx = e.clientX - this.center.x;
-        const dy = e.clientY - this.center.y;
-        const distance = Math.hypot(dx, dy);
-        const angle = Math.atan2(dy, dx);
-        const limited = Math.min(distance, this.maxDistance);
-        const x = Math.cos(angle) * limited;
-        const y = Math.sin(angle) * limited;
-        this.stick.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
-        this.handleDirection(x / this.maxDistance, y / this.maxDistance);
-    }
-    end(e) {
-        if (!this.active) return;
-        if (e && this.pointerId !== null && e.pointerId !== undefined && e.pointerId !== this.pointerId) return;
-        this.active = false;
-        this.pointerId = null;
-        this.stick.style.transform = "translate(-50%, -50%)";
-        this.handleDirection(0, 0);
-    }
-    handleDirection(x, y) {
-        if (this.mode === "right") return this.handleMouse(x, y);
-        const deadzone = 0.25;
-        const horizontal = Math.abs(x) > deadzone ? (x > 0 ? 1 : -1) : 0;
-        const vertical = Math.abs(y) > deadzone ? (y > 0 ? 1 : -1) : 0;
-        const keys = currentConfig.joystickMode === "arrows"
-            ? { up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight" }
-            : MAD_MAGE_KEYS;
-        this.updateKey("up", vertical < 0, keys.up);
-        this.updateKey("down", vertical > 0, keys.down);
-        this.updateKey("left", horizontal < 0, keys.left);
-        this.updateKey("right", horizontal > 0, keys.right);
-    }
-    updateKey(name, shouldPress, key) {
-        const property = `_pressed_${name}`;
-        if (shouldPress && !this[property]) { this[property] = true; sendKeyDown(key); }
-        if (!shouldPress && this[property]) { this[property] = false; sendKeyUp(key); }
-    }
-    handleMouse(x, y) {
-        if (Math.abs(x) < 0.08 && Math.abs(y) < 0.08) return;
-        sendToGame({ type: "mouse", action: "move", dx: x * Number(currentConfig.mouseSensitivity), dy: y * Number(currentConfig.mouseSensitivity) });
-    }
+function bindKeyButton(button) {
+  const key = button.dataset.key;
+  const down = e => { e.preventDefault(); button.setPointerCapture?.(e.pointerId); sendKeyboard('keydown', key); };
+  const up = e => { e.preventDefault(); sendKeyboard('keyup', key); };
+  button.addEventListener('pointerdown', down); button.addEventListener('pointerup', up);
+  button.addEventListener('pointercancel', up); button.addEventListener('lostpointercapture', up);
 }
+document.querySelectorAll('#dpad button').forEach(bindKeyButton);
 
-new Joystick(document.getElementById("leftJoystick"), "left");
-new Joystick(document.getElementById("rightJoystick"), "right");
-
-opacitySlider.addEventListener("input", () => {
-    currentConfig.opacity = Number(opacitySlider.value);
-    controller.style.opacity = currentConfig.opacity;
-});
-
-controllerScale.addEventListener("input", () => {
-    currentConfig.scale = Number(controllerScale.value);
-    controller.style.transform = `scale(${currentConfig.scale})`;
-});
-
-settingsButton.addEventListener("click", () => settingsPanel.classList.add("open"));
-closeSettings.addEventListener("click", () => settingsPanel.classList.remove("open"));
-
-saveSettings.addEventListener("click", () => {
-    currentConfig.joystickMode = joystickMode.value;
-    currentConfig.mouseSensitivity = Number(mouseSensitivity.value);
-    localStorage.setItem("gameControllerSettings", JSON.stringify(currentConfig));
-    showToast("Settings saved.");
-    settingsPanel.classList.remove("open");
-});
-
-function loadSettings() {
-    try {
-        const saved = JSON.parse(localStorage.getItem("gameControllerSettings") || "null");
-        if (saved) currentConfig = Object.assign(currentConfig, saved);
-    } catch (_) {}
-    joystickMode.value = currentConfig.joystickMode;
-    mouseSensitivity.value = currentConfig.mouseSensitivity;
-    opacitySlider.value = currentConfig.opacity;
-    controllerScale.value = currentConfig.scale;
-    controller.style.opacity = currentConfig.opacity;
-    controller.style.transform = `scale(${currentConfig.scale})`;
+function bindAction(id, key) {
+  const b = document.getElementById(id); if (!b) return;
+  b.addEventListener('pointerdown', e => {e.preventDefault(); sendKeyboard('keydown', key);});
+  b.addEventListener('pointerup', e => {e.preventDefault(); sendKeyboard('keyup', key);});
+  b.addEventListener('pointercancel', () => sendKeyboard('keyup', key));
 }
-loadSettings();
+bindAction('enterButton','Enter'); bindAction('escapeButton','Escape');
 
-gameFrame.addEventListener("load", () => {
-    updateStatus(isMadMage(gameUrl.value) ? "Game runtime loaded" : "Game loaded", "loaded");
-    try { gameFrame.contentWindow.focus(); } catch (_) {}
+const pad = document.getElementById('mousePad');
+let padActive = false, lastX = 0, lastY = 0;
+pad.addEventListener('pointerdown', e => { e.preventDefault(); padActive=true; lastX=e.clientX; lastY=e.clientY; pad.setPointerCapture(e.pointerId); });
+pad.addEventListener('pointermove', e => { if (!padActive) return; e.preventDefault(); moveMouse(e.clientX-lastX,e.clientY-lastY); lastX=e.clientX; lastY=e.clientY; });
+pad.addEventListener('pointerup', e => {padActive=false;}); pad.addEventListener('pointercancel', () => padActive=false);
+
+function bindMouseButton(id, button) {
+  const b=document.getElementById(id);
+  b.addEventListener('pointerdown', e=>{e.preventDefault();mouseEvent('mousedown',virtualX,virtualY,button);});
+  b.addEventListener('pointerup', e=>{e.preventDefault();mouseEvent('mouseup',virtualX,virtualY,button);});
+  b.addEventListener('pointercancel',()=>mouseEvent('mouseup',virtualX,virtualY,button));
+}
+bindMouseButton('leftClick',0); bindMouseButton('rightClick',2);
+
+document.getElementById('loadGame').addEventListener('click', () => {
+  const target = proxy || MAD_MAGE_RUNTIME;
+  frame.src = target;
+  frame.style.display='block'; welcome.style.display='none'; status.textContent='Loading…';
 });
+frame.addEventListener('load', () => {status.textContent='Game loaded'; toastMessage('Game loaded');});
 
-document.addEventListener("keydown", event => {
-    if (event.target.matches("input, select, textarea")) return;
-    sendKeyDown(event.key);
+document.getElementById('settingsButton').addEventListener('click',()=>settings.classList.add('open'));
+document.getElementById('closeSettings').addEventListener('click',()=>settings.classList.remove('open'));
+document.getElementById('saveSettings').addEventListener('click',()=>{
+  proxy=proxyInput.value.trim().replace(/\/$/,''); mouseSensitivity=Number(sensitivity.value)||10;
+  localStorage.setItem('cavernsProxy',proxy); localStorage.setItem('cavernsSensitivity',mouseSensitivity);
+  settings.classList.remove('open'); toastMessage('Settings saved');
 });
-document.addEventListener("keyup", event => {
-    if (event.target.matches("input, select, textarea")) return;
-    sendKeyUp(event.key);
-});
+opacity.addEventListener('input',()=>controller.style.opacity=opacity.value);
 
-document.addEventListener("touchmove", event => {
-    if (event.target.closest("#controller")) event.preventDefault();
-}, { passive: false });
-
-window.addEventListener("message", event => {
-    if (event.data?.type === "game-ready") updateStatus("Game connected", "connected");
-});
-
-gameUrl.value = MAD_MAGE_URL;
-updateStatus("Ready • tap Load", "ready");
+document.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('touchmove',e=>{if(e.target.closest('#controller'))e.preventDefault();},{passive:false});
