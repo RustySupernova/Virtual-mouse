@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Caverns of the Mad Mage - Mobile Controller
 // @namespace    https://github.com/RustySupernova/Virtual-mouse
-// @version      3.2.0
+// @version      3.3.0
 // @description  iPhone/iPad controls for Caverns of the Mad Mage, including touch-to-mouse input
 // @match        https://bluesquirrel.itch.io/caverns-of-the-mad-mage*
 // @match        https://html-classic.itch.zone/html/17576366/*
@@ -17,7 +17,6 @@
   const GAME_HOST = 'html-classic.itch.zone';
   const ROOT_ID = 'cmm-controller';
 
-  // Use the actual game document instead of the cross-origin itch.io iframe.
   if (location.hostname === 'bluesquirrel.itch.io') {
     if (location.pathname.startsWith('/caverns-of-the-mad-mage')) location.replace(GAME);
     return;
@@ -40,10 +39,6 @@
     document.dispatchEvent(ev);
   }
 
-  // Keep the game's own viewport/layout untouched. In particular, do NOT
-  // apply CSS transforms to the game root: Safari's hit-testing and the
-  // game's mouse-coordinate calculation can disagree after a transformed
-  // canvas/container, which prevents buttons such as New Game from working.
   function installViewport() {
     let meta = document.querySelector('meta[name="viewport"]');
     if (!meta) {
@@ -58,34 +53,155 @@
     (document.head||document.documentElement).appendChild(style);
   }
 
-  // The game is explicitly mouse + keyboard. Forward a normal iPhone tap to
-  // the game as a synthetic mouse click. No transformed game container is used,
-  // so clientX/clientY remain in the same coordinate system as the game canvas.
+  // Find the actual game root. We avoid transforming <body>, because Safari's
+  // fixed-position and hit-testing behaviour becomes unreliable when body is
+  // transformed.
+  function findStage() {
+    const preferred=['#root','#app','#game','#game-root','#game-container','.game-container','.game','main'];
+    for (const selector of preferred) {
+      const el=document.querySelector(selector);
+      if (el && !el.closest('#'+ROOT_ID)) return el;
+    }
+    if (!document.body) return null;
+    const children=[...document.body.children].filter(el=>el.id!==ROOT_ID);
+    if (!children.length) return null;
+    const vw=Math.max(1,innerWidth), vh=Math.max(1,innerHeight);
+    return children.reduce((best,el)=>{
+      const r=el.getBoundingClientRect();
+      const score=(r.width*r.height)/(vw*vh)+Math.min(0.05,el.querySelectorAll('*').length/100000);
+      return !best || score>best.score ? {el,score} : best;
+    },null)?.el || null;
+  }
+
+  function installGameFit() {
+    const style=document.createElement('style');
+    style.id='cmm-game-fit-style';
+    style.textContent=`
+      #cmm-game-stage{position:relative!important;transform-origin:0 0!important}
+    `;
+    document.documentElement.appendChild(style);
+
+    let stage=null;
+    let scale=1;
+    let visualLeft=0;
+    let visualTop=0;
+    let naturalWidth=1;
+    let naturalHeight=1;
+    let timer=0;
+
+    const measure=el=>{
+      // Prefer the element's own layout size. The game is normally a canvas
+      // plus UI, so offset/scroll dimensions are more reliable than scanning
+      // every descendant (and avoid a costly layout pass on iPhone).
+      const rect=el.getBoundingClientRect();
+      let w=Math.max(el.offsetWidth||0,el.scrollWidth||0,rect.width||0);
+      let h=Math.max(el.offsetHeight||0,el.scrollHeight||0,rect.height||0);
+      const canvas=el.querySelector('canvas');
+      if(canvas){
+        w=Math.max(w,canvas.offsetWidth||0,canvas.width||0);
+        h=Math.max(h,canvas.offsetHeight||0,canvas.height||0);
+      }
+      return {w:Math.max(1,w),h:Math.max(1,h)};
+    };
+
+    const fit=()=>{
+      const candidate=findStage();
+      if(!candidate || candidate===document.body || candidate===document.documentElement) return;
+      stage=candidate;
+      stage.id='cmm-game-stage';
+
+      // Always remove the previous transform before measuring, otherwise the
+      // measurement compounds on every resize.
+      stage.style.transform='none';
+      const m=measure(stage);
+      naturalWidth=m.w;
+      naturalHeight=m.h;
+
+      const vw=Math.max(1,visualViewport?.width||innerWidth);
+      const vh=Math.max(1,visualViewport?.height||innerHeight);
+      scale=Math.min(1,vw/naturalWidth,vh/naturalHeight);
+      visualLeft=(vw-naturalWidth*scale)/2;
+      visualTop=(vh-naturalHeight*scale)/2;
+
+      stage.style.transform=`translate(${visualLeft}px,${visualTop}px) scale(${scale})`;
+      stage.dataset.cmmScale=String(scale);
+    };
+
+    const schedule=()=>{
+      clearTimeout(timer);
+      timer=setTimeout(()=>requestAnimationFrame(fit),100);
+    };
+
+    // The game can create its canvas after document-start.
+    [0,250,750,1500,2500].forEach(t=>setTimeout(fit,t));
+    addEventListener('resize',schedule,{passive:true});
+    addEventListener('orientationchange',()=>setTimeout(fit,300),{passive:true});
+    if(window.visualViewport) visualViewport.addEventListener('resize',schedule,{passive:true});
+
+    // Only watch DOM additions/removals. Watching attributes can create a
+    // resize loop because the game and this script both change styles.
+    if(document.body){
+      new MutationObserver(records=>{
+        if(records.some(r=>r.type==='childList')) schedule();
+      }).observe(document.body,{childList:true,subtree:true});
+    }
+
+    window.CMMLayout={
+      fit,
+      getStage:()=>stage,
+      getScale:()=>scale,
+      getVisualRect:()=>({left:visualLeft,top:visualTop,width:naturalWidth*scale,height:naturalHeight*scale})
+    };
+  }
+
   function installTouchMouse() {
     let active=null, moved=false, startX=0,startY=0;
 
+    const visualPoint=e=>({x:e.clientX,y:e.clientY});
     const targetAt=(x,y)=>document.elementFromPoint(x,y)||document.body;
+
+    // CSS-transforming the game makes it visible on the whole iPhone screen,
+    // but the game itself still uses its original coordinate system. Therefore
+    // we distinguish between:
+    //   1. visual coordinates: where the user's finger is on the iPhone;
+    //   2. game coordinates: coordinates inside the unscaled game root.
+    //
+    // The target is found using visual coordinates, while MouseEvent.clientX/Y
+    // are converted back to the game's coordinate space. This is the key fix
+    // that lets us use scaling without breaking New Game / inventory clicks.
+    const mapToGame=(x,y)=>{
+      const layout=window.CMMLayout;
+      if(!layout) return {x,y};
+      const rect=layout.getVisualRect();
+      const s=layout.getScale()||1;
+      return {
+        x:(x-rect.left)/s + rect.left,
+        y:(y-rect.top)/s + rect.top
+      };
+    };
+
     const mouse=(type,x,y,button=0,buttons=0,target=null)=>{
-      const el=target||targetAt(x,y);
-      if(!el)return;
+      const visualTarget=target||targetAt(x,y);
+      if(!visualTarget) return;
+      const p=mapToGame(x,y);
       const ev=new MouseEvent(type,{
         bubbles:true,
         cancelable:true,
         composed:true,
         view:window,
-        clientX:x,
-        clientY:y,
-        screenX:x,
-        screenY:y,
+        clientX:p.x,
+        clientY:p.y,
+        screenX:p.x,
+        screenY:p.y,
         button,
         buttons,
         detail:type==='click'?1:0
       });
-      el.dispatchEvent(ev);
+      visualTarget.dispatchEvent(ev);
     };
 
     document.addEventListener('pointerdown',e=>{
-      if(e.pointerType!=='touch'||e.target.closest('#'+ROOT_ID))return;
+      if(e.pointerType!=='touch'||e.target.closest('#'+ROOT_ID)) return;
       active=e.pointerId;
       moved=false;
       startX=e.clientX;
@@ -94,13 +210,13 @@
     },{capture:true,passive:true});
 
     document.addEventListener('pointermove',e=>{
-      if(e.pointerType!=='touch'||e.pointerId!==active)return;
-      if(Math.hypot(e.clientX-startX,e.clientY-startY)>8)moved=true;
+      if(e.pointerType!=='touch'||e.pointerId!==active) return;
+      if(Math.hypot(e.clientX-startX,e.clientY-startY)>8) moved=true;
       mouse('mousemove',e.clientX,e.clientY,0,0);
     },{capture:true,passive:true});
 
     document.addEventListener('pointerup',e=>{
-      if(e.pointerType!=='touch'||e.pointerId!==active)return;
+      if(e.pointerType!=='touch'||e.pointerId!==active) return;
       const x=e.clientX,y=e.clientY;
       if(!moved){
         const el=targetAt(x,y);
@@ -111,7 +227,9 @@
       active=null;
     },{capture:true,passive:true});
 
-    document.addEventListener('pointercancel',e=>{if(e.pointerId===active)active=null},{capture:true,passive:true});
+    document.addEventListener('pointercancel',e=>{
+      if(e.pointerId===active) active=null;
+    },{capture:true,passive:true});
   }
 
   function installController() {
@@ -159,13 +277,13 @@
   }
 
   function start(){
-    if(document.getElementById(ROOT_ID))return;
+    if(document.getElementById(ROOT_ID)) return;
     installViewport();
-    // Deliberately no game-fit/transform function here.
+    installGameFit();
     installTouchMouse();
     installController();
   }
 
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start,{once:true});
   else start();
 })();
