@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Caverns of the Mad Mage - Mobile Controller
 // @namespace    https://github.com/RustySupernova/Virtual-mouse
-// @version      1.1.0
-// @description  Adds an iPhone-friendly virtual keyboard and mouse to Caverns of the Mad Mage on itch.io.
+// @version      2.0.0
+// @description  iPhone touch controls for Caverns of the Mad Mage. Opens the HTML5 game directly so keyboard/mouse events can be dispatched in the game's own document.
 // @match        https://bluesquirrel.itch.io/caverns-of-the-mad-mage*
 // @match        https://html-classic.itch.zone/html/17576366/*
-// @run-at       document-idle
-// @inject-into  content
+// @run-at       document-start
+// @inject-into  page
 // @grant        none
 // ==/UserScript==
 
@@ -14,213 +14,288 @@
   'use strict';
 
   const OUTER_ORIGIN = 'https://bluesquirrel.itch.io';
+  const GAME_URL = 'https://html-classic.itch.zone/html/17576366/index.html';
   const GAME_ORIGIN = 'https://html-classic.itch.zone';
-  const GAME_PATH = '/html/17576366/';
-  const UI_ID = 'cmc-userscript-controller';
-  const STYLE_ID = 'cmc-userscript-style';
-  const MESSAGE_SOURCE = 'cmc-mobile-controller';
+  const UI_ID = 'cmc-mobile-controller';
+  const STYLE_ID = 'cmc-mobile-controller-style';
 
-  const isGameFrame = location.origin === GAME_ORIGIN && location.pathname.startsWith(GAME_PATH);
-  const isOuterPage = location.origin === OUTER_ORIGIN && location.pathname.startsWith('/caverns-of-the-mad-mage');
-
-  if (!isGameFrame && !isOuterPage) return;
-  if (isGameFrame) installGameBridge();
-  else installControllerUI();
-
-  const virtualMouse = { x: 0, y: 0 };
-
-  function installGameBridge() {
-    window.addEventListener('message', (event) => {
-      // Normal itch embedding gives the game the bluesquirrel.itch.io parent
-      // origin. Some sandbox configurations can expose a null origin, so we
-      // accept null only when the message source is our own controller and the
-      // message came through this frame's parent window.
-      if (event.source !== window.parent) return;
-      if (event.origin !== OUTER_ORIGIN && event.origin !== 'null') return;
-      const data = event.data;
-      if (!data || data.source !== MESSAGE_SOURCE || !data.type) return;
-
-      if (data.type === 'key') dispatchKey(data.key, Boolean(data.down));
-      else if (data.type === 'mouseMove') dispatchMouseMove(Number(data.dx) || 0, Number(data.dy) || 0);
-      else if (data.type === 'mouseButton') dispatchMouseButton(data.button === 'right' ? 2 : 0, Boolean(data.down));
-    });
-
-    try {
-      window.parent.postMessage({ source: MESSAGE_SOURCE, type: 'ready' }, OUTER_ORIGIN);
-    } catch (_) {}
+  // The original itch.io page embeds the game in a cross-origin iframe.
+  // A controller on the parent page cannot directly dispatch keyboard/mouse
+  // events into that iframe. Instead, move the top-level page to the game's
+  // own URL. The same userscript then runs in the game document and can send
+  // events directly to it.
+  if (location.origin === OUTER_ORIGIN && location.pathname.startsWith('/caverns-of-the-mad-mage')) {
+    location.replace(GAME_URL);
+    return;
   }
 
-  function gameTargets() {
-    const targets = [window, document, document.body, document.documentElement];
-    return targets.filter(Boolean);
-  }
+  if (location.origin !== GAME_ORIGIN || !location.pathname.startsWith('/html/17576366/')) return;
 
-  function dispatchKey(key, down) {
-    const codeMap = {
-      w: ['KeyW', 87], a: ['KeyA', 65], s: ['KeyS', 83], d: ['KeyD', 68],
-      q: ['KeyQ', 81], e: ['KeyE', 69], z: ['KeyZ', 90], c: ['KeyC', 67],
-      ArrowUp: ['ArrowUp', 38], ArrowDown: ['ArrowDown', 40],
-      ArrowLeft: ['ArrowLeft', 37], ArrowRight: ['ArrowRight', 39],
-      Enter: ['Enter', 13], Escape: ['Escape', 27], Space: ['Space', 32]
-    };
-    const [code, keyCode] = codeMap[key] || [key, 0];
+  // Avoid installing twice if Safari reloads/injects the script more than once.
+  if (window.top !== window.self) return;
+  if (document.getElementById(UI_ID)) return;
 
-    const event = new KeyboardEvent(down ? 'keydown' : 'keyup', {
-      key,
-      code,
+  const KEY_INFO = {
+    w: { key: 'w', code: 'KeyW', keyCode: 87 },
+    a: { key: 'a', code: 'KeyA', keyCode: 65 },
+    s: { key: 's', code: 'KeyS', keyCode: 83 },
+    d: { key: 'd', code: 'KeyD', keyCode: 68 },
+    q: { key: 'q', code: 'KeyQ', keyCode: 81 },
+    e: { key: 'e', code: 'KeyE', keyCode: 69 },
+    z: { key: 'z', code: 'KeyZ', keyCode: 90 },
+    c: { key: 'c', code: 'KeyC', keyCode: 67 },
+    Enter: { key: 'Enter', code: 'Enter', keyCode: 13 },
+    Escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
+    ' ': { key: ' ', code: 'Space', keyCode: 32 },
+    Space: { key: ' ', code: 'Space', keyCode: 32 },
+    ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
+    ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+    ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
+    ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 }
+  };
+
+  function fireKeyboard(type, name) {
+    const info = KEY_INFO[name] || { key: name, code: name, keyCode: 0 };
+    const event = new KeyboardEvent(type, {
+      key: info.key,
+      code: info.code,
+      location: 0,
       bubbles: true,
       cancelable: true,
       composed: true,
-      repeat: false
+      repeat: false,
+      isComposing: false
     });
 
-    // Older HTML5 games frequently use event.which/keyCode rather than the
-    // modern event.key API. KeyboardEvent's constructor leaves these as 0,
-    // so define the legacy values explicitly when Safari permits it.
-    for (const name of ['keyCode', 'which', 'charCode']) {
-      try {
-        Object.defineProperty(event, name, { get: () => keyCode });
-      } catch (_) {}
+    // Some older game code reads event.which/event.keyCode.
+    for (const prop of ['keyCode', 'which', 'charCode']) {
+      try { Object.defineProperty(event, prop, { get: () => info.keyCode }); } catch (_) {}
     }
 
-    for (const target of gameTargets()) {
+    // Dispatch on the document/window and body. The game can therefore use
+    // window.addEventListener, document.addEventListener, or body listeners.
+    for (const target of [window, document, document.body, document.documentElement]) {
+      if (!target) continue;
       try { target.dispatchEvent(event); } catch (_) {}
     }
   }
 
-  function getCanvas() {
-    return document.querySelector('canvas') || document.querySelector('canvas#game') || document.body;
+  function gameSurface() {
+    return document.querySelector('canvas') || document.body || document.documentElement;
   }
 
-  function dispatchMouseMove(dx, dy) {
-    const canvas = getCanvas();
-    const rect = canvas && canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  let mouseX = window.innerWidth / 2;
+  let mouseY = window.innerHeight / 2;
+  let mouseButtons = 0;
 
-    if (!virtualMouse.x || !virtualMouse.y) {
-      virtualMouse.x = (rect.left + rect.right) / 2;
-      virtualMouse.y = (rect.top + rect.bottom) / 2;
-    }
+  function clampMouse() {
+    mouseX = Math.max(0, Math.min(window.innerWidth - 1, mouseX));
+    mouseY = Math.max(0, Math.min(window.innerHeight - 1, mouseY));
+  }
 
-    virtualMouse.x = Math.max(rect.left, Math.min(rect.right || window.innerWidth, virtualMouse.x + dx));
-    virtualMouse.y = Math.max(rect.top, Math.min(rect.bottom || window.innerHeight, virtualMouse.y + dy));
-
-    const target = document.elementFromPoint(virtualMouse.x, virtualMouse.y) || canvas || document.body;
-    target.dispatchEvent(new MouseEvent('mousemove', {
+  function makeMouseEvent(type, button = 0) {
+    return new MouseEvent(type, {
       bubbles: true,
       cancelable: true,
       composed: true,
-      clientX: virtualMouse.x,
-      clientY: virtualMouse.y,
-      screenX: virtualMouse.x,
-      screenY: virtualMouse.y,
-      button: 0,
-      buttons: 0,
-      view: window
-    }));
-  }
-
-  function dispatchMouseButton(button, down) {
-    const target = document.elementFromPoint(virtualMouse.x, virtualMouse.y) || getCanvas();
-    const buttons = down ? (button === 2 ? 2 : 1) : 0;
-    target.dispatchEvent(new MouseEvent(down ? 'mousedown' : 'mouseup', {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
+      view: window,
+      detail: type === 'click' ? 1 : 0,
+      screenX: mouseX,
+      screenY: mouseY,
+      clientX: mouseX,
+      clientY: mouseY,
       button,
-      buttons,
-      clientX: virtualMouse.x,
-      clientY: virtualMouse.y,
-      screenX: virtualMouse.x,
-      screenY: virtualMouse.y,
-      view: window
-    }));
-
-    if (!down) {
-      target.dispatchEvent(new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        button,
-        buttons: 0,
-        clientX: virtualMouse.x,
-        clientY: virtualMouse.y,
-        screenX: virtualMouse.x,
-        screenY: virtualMouse.y,
-        view: window
-      }));
-    }
+      buttons: mouseButtons
+    });
   }
 
-  function installControllerUI() {
-    if (document.getElementById(UI_ID)) return;
+  function dispatchMouse(type, button = 0) {
+    clampMouse();
+    const target = document.elementFromPoint(mouseX, mouseY) || gameSurface();
+    if (!target) return;
+    try { target.dispatchEvent(makeMouseEvent(type, button)); } catch (_) {}
+  }
 
+  function moveVirtualMouse(dx, dy) {
+    mouseX += dx * 1.8;
+    mouseY += dy * 1.8;
+    clampMouse();
+
+    // Send mousemove to the element currently under the virtual cursor.
+    dispatchMouse('mousemove', 0);
+  }
+
+  function pressMouse(button) {
+    const bit = button === 2 ? 2 : 1;
+    mouseButtons |= bit;
+    dispatchMouse('mousedown', button);
+  }
+
+  function releaseMouse(button) {
+    const bit = button === 2 ? 2 : 1;
+    mouseButtons &= ~bit;
+    dispatchMouse('mouseup', button);
+    if (button === 0) dispatchMouse('click', button);
+  }
+
+  function addStyles() {
+    if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      #${UI_ID}{position:fixed;left:10px;right:10px;bottom:10px;z-index:2147483647;display:flex;justify-content:space-between;align-items:flex-end;gap:12px;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;user-select:none;-webkit-user-select:none}
+      #${UI_ID}{position:fixed;left:7px;right:7px;bottom:7px;z-index:2147483647;display:flex;justify-content:space-between;align-items:flex-end;gap:7px;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;user-select:none;-webkit-user-select:none}
       #${UI_ID} *{box-sizing:border-box;touch-action:none}
-      #${UI_ID} .cmc-panel{pointer-events:auto;display:flex;gap:8px;align-items:center}
-      #${UI_ID} .cmc-dpad{width:156px;height:156px;position:relative}
-      #${UI_ID} button,#${UI_ID} .cmc-mouse{border:1px solid rgba(255,255,255,.28);background:rgba(20,20,25,.68);color:#fff;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 3px 14px rgba(0,0,0,.3);font-weight:700}
-      #${UI_ID} button{border-radius:14px;min-width:54px;height:50px;font-size:15px}
-      #${UI_ID} .cmc-key{position:absolute;width:52px;height:52px;padding:0}
-      #${UI_ID} .cmc-w{left:52px;top:0}.cmc-a{left:0;top:52px}.cmc-s{left:52px;top:52px}.cmc-d{left:104px;top:52px}
-      #${UI_ID} .cmc-mouse{width:170px;height:156px;border-radius:18px;position:relative;overflow:hidden}
-      #${UI_ID} .cmc-mouse-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.42);font-size:12px;pointer-events:none}
-      #${UI_ID} .cmc-buttons{position:absolute;left:0;right:0;bottom:0;display:flex;gap:6px;padding:7px}
-      #${UI_ID} .cmc-buttons button{flex:1;height:38px;min-width:0;font-size:12px}
-      #${UI_ID} .cmc-actions{display:flex;flex-direction:column;gap:7px}
-      #${UI_ID} .cmc-toggle{width:48px;min-width:48px;height:40px;pointer-events:auto}
+      #${UI_ID} .cmc-panel{pointer-events:auto;display:flex;gap:7px;align-items:center}
+      #${UI_ID} .cmc-dpad{width:132px;height:132px;position:relative;flex:none}
+      #${UI_ID} button,#${UI_ID} .cmc-mouse{border:1px solid rgba(255,255,255,.30);background:rgba(20,20,25,.76);color:#fff;backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);box-shadow:0 3px 14px rgba(0,0,0,.34);font-weight:700}
+      #${UI_ID} button{border-radius:13px;min-width:45px;height:43px;font-size:14px}
+      #${UI_ID} .cmc-key{position:absolute;width:44px;height:44px;padding:0}
+      #${UI_ID} .cmc-w{left:44px;top:0}.cmc-a{left:0;top:44px}.cmc-s{left:44px;top:44px}.cmc-d{left:88px;top:44px}
+      #${UI_ID} .cmc-actions{display:flex;flex-direction:column;gap:5px;flex:none}
+      #${UI_ID} .cmc-actions button{width:58px;min-width:58px;height:39px;font-size:11px}
+      #${UI_ID} .cmc-mouse{width:145px;height:132px;border-radius:17px;position:relative;overflow:hidden;pointer-events:auto}
+      #${UI_ID} .cmc-mouse-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.40);font-size:11px;pointer-events:none}
+      #${UI_ID} .cmc-buttons{position:absolute;left:0;right:0;bottom:0;display:flex;gap:5px;padding:6px}
+      #${UI_ID} .cmc-buttons button{flex:1;height:36px;min-width:0;font-size:11px}
+      #${UI_ID} .cmc-toggle{width:42px;min-width:42px;height:36px;pointer-events:auto}
       #${UI_ID}.collapsed .cmc-main{display:none}
-      #${UI_ID}.collapsed{left:auto;right:10px}
-      @media (orientation:landscape){#${UI_ID}{left:12px;right:12px;bottom:8px}#${UI_ID} .cmc-dpad{width:142px;height:142px}#${UI_ID} .cmc-mouse{width:190px;height:142px}}
-      @media (max-width:520px){#${UI_ID}{gap:6px;left:6px;right:6px;bottom:6px}#${UI_ID} .cmc-dpad{width:132px;height:132px}#${UI_ID} .cmc-key{width:44px;height:44px}#${UI_ID} .cmc-w{left:44px}.cmc-a{left:0;top:44px}.cmc-s{left:44px;top:44px}.cmc-d{left:88px;top:44px}#${UI_ID} .cmc-mouse{width:145px;height:132px}#${UI_ID} button{min-width:46px;height:44px}}
+      #${UI_ID}.collapsed{left:auto;right:7px}
+      @media (orientation:landscape){#${UI_ID}{left:10px;right:10px;bottom:7px}#${UI_ID} .cmc-dpad{width:142px;height:142px}#${UI_ID} .cmc-mouse{width:180px;height:142px}}
     `;
-    document.head.appendChild(style);
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function installUI() {
+    if (document.getElementById(UI_ID)) return;
+    addStyles();
 
     const root = document.createElement('div');
     root.id = UI_ID;
-    root.innerHTML = `<div class="cmc-panel cmc-main"><div class="cmc-dpad"><button class="cmc-key cmc-w" data-key="w">W</button><button class="cmc-key cmc-a" data-key="a">A</button><button class="cmc-key cmc-s" data-key="s">S</button><button class="cmc-key cmc-d" data-key="d">D</button></div><div class="cmc-actions"><button data-key="q">Q</button><button data-key="e">E</button><button data-key="enter">ENTER</button><button data-key="escape">ESC</button></div><div class="cmc-mouse" id="cmc-mouse-pad"><div class="cmc-mouse-label">TOUCH MOUSE</div><div class="cmc-buttons"><button data-mouse="left">LMB</button><button data-mouse="right">RMB</button></div></div></div><button class="cmc-toggle" id="cmc-toggle" aria-label="Collapse controller">⌄</button>`;
+    root.innerHTML = `
+      <div class="cmc-panel cmc-main">
+        <div class="cmc-dpad">
+          <button class="cmc-key cmc-w" data-key="w">W</button>
+          <button class="cmc-key cmc-a" data-key="a">A</button>
+          <button class="cmc-key cmc-s" data-key="s">S</button>
+          <button class="cmc-key cmc-d" data-key="d">D</button>
+        </div>
+        <div class="cmc-actions">
+          <button data-key="q">Q</button>
+          <button data-key="e">E</button>
+          <button data-key="Enter">ENTER</button>
+          <button data-key="Escape">ESC</button>
+        </div>
+        <div class="cmc-mouse" id="cmc-mouse-pad">
+          <div class="cmc-mouse-label">TOUCH MOUSE</div>
+          <div class="cmc-buttons">
+            <button data-mouse="left">LMB</button>
+            <button data-mouse="right">RMB</button>
+          </div>
+        </div>
+      </div>
+      <button class="cmc-toggle" id="cmc-toggle" aria-label="Collapse controller">⌄</button>
+    `;
+
     document.body.appendChild(root);
 
-    root.querySelectorAll('[data-key]').forEach((button) => {
-      const rawKey = button.dataset.key;
-      const key = rawKey === 'enter' ? 'Enter' : rawKey === 'escape' ? 'Escape' : rawKey;
+    root.querySelectorAll('[data-key]').forEach(button => {
+      const key = button.dataset.key;
       let active = false;
-      const press = (event) => { event.preventDefault(); if (active) return; active = true; sendToGame({source:MESSAGE_SOURCE,type:'key',key,down:true}); };
-      const release = (event) => { event.preventDefault(); if (!active) return; active = false; sendToGame({source:MESSAGE_SOURCE,type:'key',key,down:false}); };
-      button.addEventListener('pointerdown', press);
-      button.addEventListener('pointerup', release);
-      button.addEventListener('pointercancel', release);
-      button.addEventListener('pointerleave', (event) => { if (event.buttons) release(event); });
+      let pointerId = null;
+
+      const down = event => {
+        event.preventDefault();
+        if (active) return;
+        active = true;
+        pointerId = event.pointerId;
+        try { button.setPointerCapture(event.pointerId); } catch (_) {}
+        fireKeyboard('keydown', key);
+      };
+
+      const up = event => {
+        event.preventDefault();
+        if (!active) return;
+        if (pointerId !== null && event.pointerId !== pointerId && event.type !== 'lostpointercapture') return;
+        active = false;
+        pointerId = null;
+        fireKeyboard('keyup', key);
+      };
+
+      button.addEventListener('pointerdown', down);
+      button.addEventListener('pointerup', up);
+      button.addEventListener('pointercancel', up);
+      button.addEventListener('lostpointercapture', up);
     });
 
     const mousePad = root.querySelector('#cmc-mouse-pad');
-    let lastX = 0, lastY = 0, mousePointerId = null;
-    mousePad.addEventListener('pointerdown', (event) => { if (event.target.closest('button')) return; event.preventDefault(); mousePointerId = event.pointerId; lastX = event.clientX; lastY = event.clientY; mousePad.setPointerCapture(event.pointerId); });
-    mousePad.addEventListener('pointermove', (event) => { if (event.pointerId !== mousePointerId) return; event.preventDefault(); const dx=(event.clientX-lastX)*1.7, dy=(event.clientY-lastY)*1.7; lastX=event.clientX; lastY=event.clientY; sendToGame({source:MESSAGE_SOURCE,type:'mouseMove',dx,dy}); });
-    const endMouse = (event) => { if (event.pointerId === mousePointerId) mousePointerId=null; };
-    mousePad.addEventListener('pointerup', endMouse); mousePad.addEventListener('pointercancel', endMouse);
+    let padPointer = null;
+    let lastX = 0;
+    let lastY = 0;
 
-    root.querySelectorAll('[data-mouse]').forEach((button) => {
-      const which=button.dataset.mouse; let active=false;
-      const down=(event)=>{event.preventDefault();if(active)return;active=true;sendToGame({source:MESSAGE_SOURCE,type:'mouseButton',button:which,down:true});};
-      const up=(event)=>{event.preventDefault();if(!active)return;active=false;sendToGame({source:MESSAGE_SOURCE,type:'mouseButton',button:which,down:false});};
-      button.addEventListener('pointerdown',down); button.addEventListener('pointerup',up); button.addEventListener('pointercancel',up);
+    mousePad.addEventListener('pointerdown', event => {
+      if (event.target.closest('button')) return;
+      event.preventDefault();
+      padPointer = event.pointerId;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      try { mousePad.setPointerCapture(event.pointerId); } catch (_) {}
     });
 
-    root.querySelector('#cmc-toggle').addEventListener('click', () => { root.classList.toggle('collapsed'); root.querySelector('#cmc-toggle').textContent=root.classList.contains('collapsed')?'⌃':'⌄'; });
+    mousePad.addEventListener('pointermove', event => {
+      if (event.pointerId !== padPointer) return;
+      event.preventDefault();
+      const dx = event.clientX - lastX;
+      const dy = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      if (dx || dy) moveVirtualMouse(dx, dy);
+    });
 
-    // Safari/Userscripts injects the same userscript into matching nested
-    // frames. We only use postMessage here, so no cross-origin DOM access is
-    // needed.
-    const findFrame = () => [...document.querySelectorAll('iframe')].find((f) => { try{return f.src.includes('html-classic.itch.zone/html/17576366/');}catch(_){return false;} });
-    const sendReady = () => { const frame=findFrame(); if(frame&&frame.contentWindow) frame.contentWindow.postMessage({source:MESSAGE_SOURCE,type:'ping'},GAME_ORIGIN); };
-    setInterval(sendReady,1500); sendReady();
+    const endPad = event => {
+      if (event.pointerId === padPointer) padPointer = null;
+    };
+    mousePad.addEventListener('pointerup', endPad);
+    mousePad.addEventListener('pointercancel', endPad);
+    mousePad.addEventListener('lostpointercapture', endPad);
+
+    root.querySelectorAll('[data-mouse]').forEach(button => {
+      const which = button.dataset.mouse === 'right' ? 2 : 0;
+      let active = false;
+
+      const down = event => {
+        event.preventDefault();
+        if (active) return;
+        active = true;
+        try { button.setPointerCapture(event.pointerId); } catch (_) {}
+        pressMouse(which);
+      };
+
+      const up = event => {
+        event.preventDefault();
+        if (!active) return;
+        active = false;
+        releaseMouse(which);
+      };
+
+      button.addEventListener('pointerdown', down);
+      button.addEventListener('pointerup', up);
+      button.addEventListener('pointercancel', up);
+      button.addEventListener('lostpointercapture', up);
+    });
+
+    root.querySelector('#cmc-toggle').addEventListener('click', () => {
+      root.classList.toggle('collapsed');
+      root.querySelector('#cmc-toggle').textContent = root.classList.contains('collapsed') ? '⌃' : '⌄';
+    });
+
+    // Keep the virtual pointer inside the current viewport after rotation.
+    window.addEventListener('resize', clampMouse);
   }
 
-  function sendToGame(message) {
-    const frame=[...document.querySelectorAll('iframe')].find((f)=>{try{return f.src.includes('html-classic.itch.zone/html/17576366/');}catch(_){return false;}});
-    if(frame&&frame.contentWindow) frame.contentWindow.postMessage(message,GAME_ORIGIN);
+  // document-start may run before <body> exists, so wait for DOMContentLoaded.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', installUI, { once: true });
+  } else {
+    installUI();
   }
 })();
