@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    >
+    <meta name="theme-color" content="#111111">
+    <title>Mobile Game Controller</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+<!-- Top control bar -->
+<header id="topbar">
+    <div class="logo">GamePad Web</div>
+    <div class="url-container">
+        <input
+            id="gameUrl"
+            type="url"
+            placeholder="Enter game URL, e.g. https://example.com"
+            autocomplete="off"
+        >
+        <button id="loadGame">Load</button>
+    </div>
+    <button id="settingsButton">⚙</button>
+</header>
+<!-- Game area -->
+<main id="gameContainer">
+    <div id="welcome">
+        <div class="welcome-icon">🎮</div>
+        <h1>Mobile Game Controller</h1>
+        <p>
+            Enter a web game URL above and load it.
+        </p>
+        <p class="warning">
+            Some websites do not allow iframe embedding.
+        </p>
+    </div>
+    <iframe
+        id="gameFrame"
+        title="Game"
+        allow="fullscreen; autoplay"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups"
+    ></iframe>
+    <!-- Controller overlay -->
+    <div id="controller">
+        <!-- Left joystick -->
+        <div id="leftJoystick" class="joystick">
+            <div class="joystick-base">
+                <div class="joystick-stick"></div>
+            </div>
+        </div>
+        <!-- Right joystick / mouse -->
+        <div id="rightJoystick" class="joystick right">
+            <div class="joystick-base">
+                <div class="joystick-stick"></div>
+            </div>
+        </div>
+        <!-- Face buttons -->
+        <div id="faceButtons">
+            <button
+                class="game-button button-y"
+                data-key="r"
+            >
+                Y
+            </button>
+            <button
+                class="game-button button-x"
+                data-key="q"
+            >
+                X
+            </button>
+            <button
+                class="game-button button-b"
+                data-key="e"
+            >
+                B
+            </button>
+            <button
+                class="game-button button-a"
+                data-key=" "
+            >
+                A
+            </button>
+        </div>
+        <!-- Shoulder buttons -->
+        <div id="shoulderButtons">
+            <button
+                class="shoulder"
+                data-key="Shift"
+            >
+                L
+            </button>
+            <button
+                class="shoulder"
+                data-key="Control"
+            >
+                R
+            </button>
+        </div>
+        <!-- Utility buttons -->
+        <div id="utilityButtons">
+            <button
+                class="utility"
+                data-key="Escape"
+            >
+                ESC
+            </button>
+            <button
+                class="utility"
+                data-key="Enter"
+            >
+                ENTER
+            </button>
+            <button
+                class="utility"
+                data-key=" "
+            >
+                SPACE
+            </button>
+        </div>
+    </div>
+    <!-- Controller opacity -->
+    <div id="opacityControl">
+        <label for="opacitySlider">Controller</label>
+        <input
+            id="opacitySlider"
+            type="range"
+            min="0.2"
+            max="1"
+            step="0.05"
+            value="0.75"
+        >
+    </div>
+</main>
+</div>
+<!-- Settings panel -->
+<div id="settingsPanel">
+<div class="settings-header">
+    <h2>Controller Settings</h2>
+    <button id="closeSettings">×</button>
+</div>
+<div class="setting-group">
+    <label>
+        Joystick mode
+    </label>
+    <select id="joystickMode">
+        <option value="wasd">WASD</option>
+        <option value="arrows">Arrow Keys</option>
+    </select>
+</div>
+<div class="setting-group">
+    <label>
+        Mouse sensitivity
+    </label>
+    <input
+        id="mouseSensitivity"
+        type="range"
+        min="1"
+        max="20"
+        value="8"
+    >
+</div>
+<div class="setting-group">
+    <label>
+        Controller scale
+    </label>
+    <input
+        id="controllerScale"
+        type="range"
+        min="0.6"
+        max="1.5"
+        step="0.05"
+        value="1"
+    >
+</div>
+<button id="saveSettings">
+    Save Settings
+</button>
+</div>
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
