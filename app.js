@@ -15,6 +15,7 @@ const toast = document.getElementById("toast");
 const gameStatus = document.getElementById("gameStatus");
 
 const MAD_MAGE_URL = "https://bluesquirrel.itch.io/caverns-of-the-mad-mage";
+const MAD_MAGE_RUNTIME = "https://html-classic.itch.zone/html/17576366/index.html";
 const MAD_MAGE_KEYS = { up: "w", down: "s", left: "a", right: "d" };
 
 let currentConfig = {
@@ -39,8 +40,19 @@ function normalizeUrl(value) {
 }
 
 function isMadMage(url) {
-    try { return new URL(url).hostname === "bluesquirrel.itch.io" && new URL(url).pathname.includes("caverns-of-the-mad-mage"); }
-    catch { return false; }
+    try {
+        const parsed = new URL(url);
+        return parsed.hostname === "bluesquirrel.itch.io" && parsed.pathname.includes("caverns-of-the-mad-mage");
+    } catch {
+        return false;
+    }
+}
+
+function resolveGameRuntime(url) {
+    // The itch.io page is a wrapper around the actual HTML5 runtime.
+    // For this game we know the embedded runtime URL and load it directly.
+    if (isMadMage(url)) return MAD_MAGE_RUNTIME;
+    return url;
 }
 
 function updateStatus(text, state = "") {
@@ -56,18 +68,19 @@ function loadGamePage() {
         return;
     }
 
+    const runtimeUrl = resolveGameRuntime(url);
     welcome.style.display = "none";
     gameFrame.style.display = "block";
-    gameFrame.src = url;
+    updateStatus(isMadMage(url) ? "Loading game runtime…" : "Loading game…", "loading");
+    gameFrame.src = runtimeUrl;
 
     if (isMadMage(url)) {
         currentConfig.joystickMode = "wasd";
         joystickMode.value = "wasd";
-        updateStatus("Caverns preset • WASD + Enter", "preset");
-        showToast("Caverns of the Mad Mage preset loaded.");
+        updateStatus("Caverns • loading runtime", "preset");
+        showToast("Loading Caverns of the Mad Mage…");
     } else {
-        updateStatus("Controller ready", "ready");
-        showToast("Loading game...");
+        showToast("Loading game…");
     }
 }
 
@@ -117,13 +130,15 @@ function keyToCode(key) {
     if (key.length === 1 && /[0-9]/.test(key)) return `Digit${key}`;
     return {
         ArrowUp: "ArrowUp", ArrowDown: "ArrowDown", ArrowLeft: "ArrowLeft", ArrowRight: "ArrowRight",
-        Enter: "Enter", Escape: "Escape", " ": "Space"
+        Enter: "Enter", Escape: "Escape", " ": "Space",
+        Shift: "ShiftLeft", Control: "ControlLeft"
     }[key] || key;
 }
 
 function sendToGame(message) {
     if (dispatchIntoSameOriginFrame(message)) return true;
     if (!gameFrame.contentWindow) return false;
+    // This only works if the embedded game explicitly listens for postMessage.
     gameFrame.contentWindow.postMessage(message, "*");
     return false;
 }
@@ -255,7 +270,7 @@ function loadSettings() {
 loadSettings();
 
 gameFrame.addEventListener("load", () => {
-    updateStatus("Game loaded", "loaded");
+    updateStatus(isMadMage(gameUrl.value) ? "Game runtime loaded" : "Game loaded", "loaded");
     try { gameFrame.contentWindow.focus(); } catch (_) {}
 });
 
@@ -276,6 +291,5 @@ window.addEventListener("message", event => {
     if (event.data?.type === "game-ready") updateStatus("Game connected", "connected");
 });
 
-// Default target for the current project.
 gameUrl.value = MAD_MAGE_URL;
 updateStatus("Ready • tap Load", "ready");
