@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Caverns of the Mad Mage - Mobile Controller
 // @namespace    https://github.com/RustySupernova/Virtual-mouse
-// @version      3.0.0
-// @description  iPhone/iPad controller with a dedicated mobile game viewport for Caverns of the Mad Mage
+// @version      3.1.0
+// @description  iPhone/iPad controls for Caverns of the Mad Mage, including touch-to-mouse input
 // @match        https://bluesquirrel.itch.io/caverns-of-the-mad-mage*
 // @match        https://html-classic.itch.zone/html/17576366/*
 // @run-at       document-start
@@ -17,97 +17,67 @@
   const GAME_HOST = 'html-classic.itch.zone';
   const ROOT_ID = 'cmm-controller';
 
-  // The itch.io page contains a cross-origin iframe. Trying to resize or
-  // transform the iframe's internals from the parent page is unreliable in
-  // Safari. Open the actual game document instead; the controller then runs
-  // in the same document as the game and can also fix its layout safely.
+  // Use the actual game document instead of the cross-origin itch.io iframe.
   if (location.hostname === 'bluesquirrel.itch.io') {
-    if (location.pathname.startsWith('/caverns-of-the-mad-mage')) {
-      location.replace(GAME);
-    }
+    if (location.pathname.startsWith('/caverns-of-the-mad-mage')) location.replace(GAME);
     return;
   }
-
   if (location.hostname !== GAME_HOST || !location.pathname.startsWith('/html/17576366/')) return;
-  if (window.top !== window.self) return;
-  if (document.getElementById(ROOT_ID)) return;
+  if (window.top !== window.self || document.getElementById(ROOT_ID)) return;
 
   const KEY = {
     w:['w','KeyW',87], a:['a','KeyA',65], s:['s','KeyS',83], d:['d','KeyD',68],
     q:['q','KeyQ',81], e:['e','KeyE',69], z:['z','KeyZ',90], c:['c','KeyC',67],
-    Enter:['Enter','Enter',13], Escape:['Escape','Escape',27],
-    Space:[' ','Space',32]
+    Enter:['Enter','Enter',13], Escape:['Escape','Escape',27], Space:[' ','Space',32]
   };
 
   function keyEvent(type, name) {
     const x = KEY[name] || [name,name,0];
-    const ev = new KeyboardEvent(type, {
-      key:x[0], code:x[1], bubbles:true, cancelable:true, composed:true, repeat:false
-    });
-    // Some older game code reads these legacy properties.
+    const ev = new KeyboardEvent(type, {key:x[0], code:x[1], bubbles:true, cancelable:true, composed:true});
     for (const p of ['keyCode','which','charCode']) {
       try { Object.defineProperty(ev,p,{get:()=>x[2]}); } catch (_) {}
     }
-    for (const target of [window, document, document.body, document.documentElement]) {
-      if (target) { try { target.dispatchEvent(ev); } catch (_) {} }
-    }
+    // Dispatch once. Re-dispatching the same Event object to several targets
+    // can produce inconsistent behaviour in Safari.
+    document.dispatchEvent(ev);
   }
 
   function installViewport() {
     let meta = document.querySelector('meta[name="viewport"]');
-    if (!meta) {
-      meta = document.createElement('meta');
-      meta.name = 'viewport';
-      (document.head || document.documentElement).appendChild(meta);
-    }
-    meta.content = 'width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover';
-
-    const style = document.createElement('style');
-    style.id = 'cmm-viewport-style';
-    style.textContent = `
-      html,body{margin:0!important;padding:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;overflow:hidden!important;background:#000!important;-webkit-text-size-adjust:100%!important;overscroll-behavior:none!important}
-    `;
-    (document.head || document.documentElement).appendChild(style);
+    if (!meta) { meta=document.createElement('meta'); meta.name='viewport'; (document.head||document.documentElement).appendChild(meta); }
+    meta.content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover';
+    const style=document.createElement('style');
+    style.id='cmm-viewport-style';
+    style.textContent='html,body{margin:0!important;padding:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;overflow:hidden!important;background:#000!important;-webkit-text-size-adjust:100%!important;overscroll-behavior:none!important}';
+    (document.head||document.documentElement).appendChild(style);
   }
 
-  // Safari was previously getting a transform on <body>. That is the wrong
-  // level for this game: fixed/absolute descendants can then use different
-  // coordinate systems, producing the classic "map on the right, text on the
-  // left" failure. Transform one complete game root instead.
   function findStage() {
-    const preferred = ['#root','#app','#game','#game-root','#game-container','.game-container','.game','main'];
-    for (const s of preferred) {
-      const el = document.querySelector(s);
-      if (el && !el.closest('#'+ROOT_ID)) return el;
-    }
-    const kids = [...document.body.children].filter(e => e.id !== ROOT_ID);
-    if (!kids.length) return document.body;
-    const vw = innerWidth || 1, vh = innerHeight || 1;
-    return kids.reduce((best,el) => {
-      const r=el.getBoundingClientRect();
-      const score=Math.min(1,(r.width*r.height)/(vw*vh))*100000+Math.min(5000,el.querySelectorAll('*').length);
-      return score>(best.score||-1)?{el,score}:best;
-    },{}).el || kids[0];
+    // Prefer the game's actual root. Do not use body: transforming body breaks
+    // Safari's fixed/absolute coordinate system and click hit testing.
+    const preferred=['#root','#app','#game','#game-root','#game-container','.game-container','.game','main'];
+    for(const s of preferred){const el=document.querySelector(s);if(el&&!el.closest('#'+ROOT_ID))return el;}
+    const kids=[...document.body.children].filter(e=>e.id!==ROOT_ID);
+    if(!kids.length)return null;
+    const vw=innerWidth||1,vh=innerHeight||1;
+    return kids.reduce((best,el)=>{const r=el.getBoundingClientRect();const score=Math.min(1,(r.width*r.height)/(vw*vh))*100000+Math.min(5000,el.querySelectorAll('*').length);return score>(best.score||-1)?{el,score}:best},{}).el||kids[0];
   }
 
   function installGameFit() {
     const style=document.createElement('style');
     style.id='cmm-game-fit-style';
-    style.textContent=`#cmm-game-stage{position:absolute!important;left:0!important;top:0!important;transform-origin:0 0!important}`;
+    style.textContent='#cmm-game-stage{position:relative!important;transform-origin:0 0!important}';
     (document.head||document.documentElement).appendChild(style);
 
-    let stage=null, timer=0;
+    let stage=null,timer=0, lastScale=1;
     const measure=el=>{
       const base=el.getBoundingClientRect();
       let w=Math.max(base.width,el.scrollWidth||0,el.offsetWidth||0);
       let h=Math.max(base.height,el.scrollHeight||0,el.offsetHeight||0);
       const all=el.querySelectorAll('*');
-      for(let i=0;i<Math.min(all.length,2000);i++){
+      for(let i=0;i<Math.min(all.length,1500);i++){
         const r=all[i].getBoundingClientRect();
-        if(r.width||r.height){
-          w=Math.max(w,r.right-base.left);
-          h=Math.max(h,r.bottom-base.top);
-        }
+        if(r.width||r.height){w=Math.max(w,r.right-base.left);h=Math.max(h,r.bottom-base.top);}
       }
       return {w:Math.max(1,w),h:Math.max(1,h)};
     };
@@ -115,23 +85,72 @@
       stage=findStage();
       if(!stage||stage===document.body)return;
       stage.id='cmm-game-stage';
+      // Important: preserve the game's own layout while measuring.
       stage.style.transform='none';
-      const vw=Math.max(1,visualViewport?.width||innerWidth);
-      const vh=Math.max(1,visualViewport?.height||innerHeight);
+      const vw=Math.max(1,visualViewport?.width||innerWidth),vh=Math.max(1,visualViewport?.height||innerHeight);
       const m=measure(stage);
       const scale=Math.min(1,vw/m.w,vh/m.h);
-      const x=Math.max(0,(vw-m.w*scale)/2);
-      const y=Math.max(0,(vh-m.h*scale)/2);
+      const x=Math.max(0,(vw-m.w*scale)/2),y=Math.max(0,(vh-m.h*scale)/2);
       stage.style.transform=`translate(${x}px,${y}px) scale(${scale})`;
       stage.dataset.cmmScale=scale;
+      lastScale=scale;
     };
-    const schedule=()=>{clearTimeout(timer);timer=setTimeout(()=>requestAnimationFrame(fit),80)};
-    [0,250,700,1500,3000].forEach(t=>setTimeout(fit,t));
+    const schedule=()=>{clearTimeout(timer);timer=setTimeout(()=>requestAnimationFrame(fit),150)};
+    [0,400,1000,2000].forEach(t=>setTimeout(fit,t));
     addEventListener('resize',schedule,{passive:true});
-    addEventListener('orientationchange',()=>setTimeout(fit,250),{passive:true});
+    addEventListener('orientationchange',()=>setTimeout(fit,300),{passive:true});
     if(visualViewport)visualViewport.addEventListener('resize',schedule,{passive:true});
+    // Only watch additions/removals. Attribute mutations can cause a resize
+    // loop while the game is running.
     new MutationObserver(rs=>{if(rs.some(r=>r.type==='childList'))schedule()}).observe(document.body,{childList:true,subtree:true});
-    window.CMMLayout={fit,getStage:()=>stage};
+    window.CMMLayout={fit,getStage:()=>stage,getScale:()=>lastScale};
+  }
+
+  // The game is explicitly mouse + keyboard. The previous v3 controller only
+  // supplied keyboard events, so the New Game screen could not be activated.
+  // Forward a normal iPhone tap to the game as a synthetic mouse click.
+  // This also makes inventory/item buttons usable without a separate mouse pad.
+  function installTouchMouse() {
+    let active=null, moved=false, startX=0,startY=0;
+
+    const getPoint=e=>({x:e.clientX,y:e.clientY});
+    const targetAt=(x,y)=>document.elementFromPoint(x,y)||document.body;
+    const mouse=(type,x,y,button=0,buttons=0,target=null)=>{
+      const el=target||targetAt(x,y);
+      if(!el)return;
+      const ev=new MouseEvent(type,{bubbles:true,cancelable:true,composed:true,view:window,clientX:x,clientY:y,screenX:x,screenY:y,button,buttons,detail:type==='click'?1:0});
+      el.dispatchEvent(ev);
+    };
+
+    // Use pointer events on the game itself. Controller buttons stop propagation,
+    // so they are unaffected.
+    document.addEventListener('pointerdown',e=>{
+      if(e.pointerType!=='touch'||e.target.closest('#'+ROOT_ID))return;
+      active=e.pointerId;moved=false;startX=e.clientX;startY=e.clientY;
+      mouse('mousemove',e.clientX,e.clientY,0,0);
+    },{capture:true,passive:true});
+
+    document.addEventListener('pointermove',e=>{
+      if(e.pointerType!=='touch'||e.pointerId!==active)return;
+      if(Math.hypot(e.clientX-startX,e.clientY-startY)>8)moved=true;
+      mouse('mousemove',e.clientX,e.clientY,0,0);
+    },{capture:true,passive:true});
+
+    document.addEventListener('pointerup',e=>{
+      if(e.pointerType!=='touch'||e.pointerId!==active)return;
+      const x=e.clientX,y=e.clientY;
+      if(!moved){
+        // Do not suppress Safari's native click. Synthetic click is dispatched
+        // only if the target is not one of the controller elements.
+        const el=targetAt(x,y);
+        mouse('mousedown',x,y,0,1,el);
+        mouse('mouseup',x,y,0,0,el);
+        mouse('click',x,y,0,0,el);
+      }
+      active=null;
+    },{capture:true,passive:true});
+
+    document.addEventListener('pointercancel',e=>{if(e.pointerId===active)active=null},{capture:true,passive:true});
   }
 
   function installController() {
@@ -171,6 +190,7 @@
     if(document.getElementById(ROOT_ID))return;
     installViewport();
     installGameFit();
+    installTouchMouse();
     installController();
   }
 
